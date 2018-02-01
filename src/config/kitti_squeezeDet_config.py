@@ -26,7 +26,7 @@ def kitti_squeezeDet_config():
   mc.LOSS_COEF_CONF_NEG    = 100.0
   mc.LOSS_COEF_CLASS       = 1.0
 
-  mc.PLOT_PROB_THRESH      = 0.4
+  mc.PLOT_PROB_THRESH      = 0.3
   mc.NMS_THRESH            = 0.4
   mc.PROB_THRESH           = 0.005
   mc.TOP_N_DETECTION       = 64

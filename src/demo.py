@@ -23,20 +23,21 @@ import tensorflow as tf
 from config import *
 from train import _draw_box
 from nets import *
+import matplotlib.pyplot as plt
 
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string(
-    'mode', 'image', """'image' or 'video'.""")
+    'mode', 'img_seq', """img_seq or 'image' or 'video'.""")
 tf.app.flags.DEFINE_string(
-    'checkpoint', './data/model_checkpoints/squeezeDet/model.ckpt-87000',
+    'checkpoint', '../data/model_checkpoints/squeezeDet/model.ckpt-87000',
     """Path to the model parameter file.""")
 tf.app.flags.DEFINE_string(
-    'input_path', './data/sample.png',
+    'input_path', '../data/seq1',
     """Input image or video to be detected. Can process glob input such as """
     """./data/00000*.png.""")
 tf.app.flags.DEFINE_string(
-    'out_dir', './data/out/', """Directory to dump output image or video.""")
+    'out_dir', '../data/out/', """Directory to dump output image or video.""")
 
 
 def video_demo():
@@ -163,26 +164,34 @@ def image_demo():
     with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
       saver.restore(sess, FLAGS.checkpoint)
 
-      for f in glob.iglob(FLAGS.input_path):
+      print (glob.glob(FLAGS.input_path))
+      list_imgname = sorted(glob.glob(FLAGS.input_path))
+      print (list_imgname)
+      for f in list_imgname: #glob.iglob(FLAGS.input_path):
+        plt.clf()
+        plt.cla()
         im = cv2.imread(f)
         im = im.astype(np.float32, copy=False)
         im = cv2.resize(im, (mc.IMAGE_WIDTH, mc.IMAGE_HEIGHT))
         input_image = im - mc.BGR_MEANS
 
+        start = time.time()
         # Detect
         det_boxes, det_probs, det_class = sess.run(
             [model.det_boxes, model.det_probs, model.det_class],
             feed_dict={model.image_input:[input_image], model.keep_prob: 1.0})
-
+        
         # Filter
         final_boxes, final_probs, final_class = model.filter_prediction(
             det_boxes[0], det_probs[0], det_class[0])
-
+        
         keep_idx    = [idx for idx in range(len(final_probs)) \
                           if final_probs[idx] > mc.PLOT_PROB_THRESH]
         final_boxes = [final_boxes[idx] for idx in keep_idx]
         final_probs = [final_probs[idx] for idx in keep_idx]
         final_class = [final_class[idx] for idx in keep_idx]
+
+        end = time.time()
 
         # TODO(bichen): move this color dict to configuration file
         cls2clr = {
@@ -201,15 +210,117 @@ def image_demo():
 
         file_name = os.path.split(f)[1]
         out_file_name = os.path.join(FLAGS.out_dir, 'out_'+file_name)
-        cv2.imwrite(out_file_name, im)
-        print ('Image detection output saved to {}'.format(out_file_name))
+        total_time_ms = (end-start)*1000.
+        print ('processing time:%.3fms'%(total_time_ms))
+        
+        b,g,r = cv2.split(im)
+        ori = cv2.merge([r,g,b])
+        ori /= 255.
+        fig = plt.imshow(ori, interpolation='nearest')
+        fig.axes.get_xaxis().set_visible(False)
+        fig.axes.get_yaxis().set_visible(False)
+        plt.subplots_adjust(bottom=0.01, left=0.01, right=0.99, top=0.99, wspace=0.02, hspace=0.02)
+        plt.show()
+        # plt.pause(0.001)
+        # cv2.imwrite(out_file_name, im)
+        # print ('Image detection output saved to {}'.format(out_file_name))
 
+def img_seq_demo():
+  """Detect image."""
+
+  flg_first = True
+  with tf.Graph().as_default():
+    # Load model
+    mc = kitti_squeezeDet_config()
+    mc.BATCH_SIZE = 1
+    # model parameters will be restored from checkpoint
+    mc.LOAD_PRETRAINED_MODEL = False
+    model = SqueezeDet(mc, FLAGS.gpu)
+
+    saver = tf.train.Saver(model.model_params)
+
+    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+      saver.restore(sess, FLAGS.checkpoint)
+
+      
+      img_path = os.path.join(FLAGS.input_path, '*.png')
+      print (img_path)
+      list_imgname = sorted(glob.glob(img_path))
+      print (list_imgname)
+      for f in list_imgname: #glob.iglob(FLAGS.input_path):
+        # plt.clf()
+        # plt.cla()
+        im = cv2.imread(f)
+        im = im.astype(np.float32, copy=False)
+        im = cv2.resize(im, (mc.IMAGE_WIDTH, mc.IMAGE_HEIGHT))
+        input_image = im - mc.BGR_MEANS
+
+        start = time.time()
+        # Detect
+        det_boxes, det_probs, det_class = sess.run(
+            [model.det_boxes, model.det_probs, model.det_class],
+            feed_dict={model.image_input:[input_image], model.keep_prob: 1.0})
+        
+        # Filter
+        final_boxes, final_probs, final_class = model.filter_prediction(
+            det_boxes[0], det_probs[0], det_class[0])
+        
+        keep_idx    = [idx for idx in range(len(final_probs)) \
+                          if final_probs[idx] > mc.PLOT_PROB_THRESH]
+        final_boxes = [final_boxes[idx] for idx in keep_idx]
+        final_probs = [final_probs[idx] for idx in keep_idx]
+        final_class = [final_class[idx] for idx in keep_idx]
+
+        end = time.time()
+
+        # TODO(bichen): move this color dict to configuration file
+        cls2clr = {
+            'car': (255, 191, 0),
+            'cyclist': (0, 191, 255),
+            'pedestrian':(255, 0, 191)
+        }
+
+        # Draw boxes
+        _draw_box(
+            im, final_boxes,
+            [mc.CLASS_NAMES[idx]+': (%.2f)'% prob \
+                for idx, prob in zip(final_class, final_probs)],
+            cdict=cls2clr,
+        )
+
+        file_name = os.path.split(f)[1]
+        out_file_name = os.path.join(FLAGS.out_dir, 'out_'+file_name)
+        total_time_ms = (end-start)*1000.
+        print ('processing time:%.3fms'%(total_time_ms))
+        
+        im /= 255.
+        cv2.putText(im, 'fps:%.2f'%(1000/total_time_ms), (5,20), cv2.FONT_HERSHEY_PLAIN, 1.3, (0,255,0), 2)
+        cv2.imshow('KITTI squeezeDet', im)
+        if flg_first == True:
+            flg_first = False
+            cv2.waitKey()
+        if cv2.waitKey(1) == 27:
+            break
+
+        # b,g,r = cv2.split(im)
+        # ori = cv2.merge([r,g,b])
+        # ori /= 255.
+        # fig = plt.imshow(ori, interpolation='nearest')
+        # fig.axes.get_xaxis().set_visible(False)
+        # fig.axes.get_yaxis().set_visible(False)
+        # plt.subplots_adjust(bottom=0.01, left=0.01, right=0.99, top=0.99, wspace=0.02, hspace=0.02)
+        # plt.show()
+        # plt.pause(0.001)
+        # cv2.imwrite(out_file_name, im)
+        # print ('Image detection output saved to {}'.format(out_file_name))
 
 def main(argv=None):
   if not tf.gfile.Exists(FLAGS.out_dir):
     tf.gfile.MakeDirs(FLAGS.out_dir)
   if FLAGS.mode == 'image':
     image_demo()
+  elif FLAGS.mode == 'img_seq':
+    img_seq_demo()
   else:
     video_demo()
 
